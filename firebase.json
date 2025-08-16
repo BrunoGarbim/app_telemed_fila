@@ -1,0 +1,42 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "datatelemed",
+          "appId": "1:900023400699:android:1089f7ca356c75870a185e",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "datatelemed",
+          "configurations": {
+            "android": "1:900023400699:android:1089f7ca356c75870a185e",
+            "ios": "1:900023400699:ios:a1d1c0100dd8e5870a185e",
+            "macos": "1:900023400699:ios:a1d1c0100dd8e5870a185e",
+            "web": "1:900023400699:web:b102c3af88d0e6fd0a185e",
+            "windows": "1:900023400699:web:30af06712d290fbe0a185e"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ]
+}
