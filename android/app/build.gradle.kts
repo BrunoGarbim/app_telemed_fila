@@ -64,4 +64,5 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-firestore")
     implementation("androidx.multidex:multidex:2.0.1")
+    implementation("com.google.firebase:firebase-appcheck-debug:17.1.2") // Adicione esta linha
 }

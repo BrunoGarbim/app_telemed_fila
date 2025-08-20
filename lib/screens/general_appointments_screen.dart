@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart'; // A correção é garantir que esta linha exista e esteja correta
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
 
@@ -20,9 +20,13 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
   void initState() {
     super.initState();
     _searchController.addListener(() {
-      setState(() {
-        _searchQuery = _searchController.text.toLowerCase();
-      });
+      // Usamos .trim() para remover espaços em branco e garantir que a busca não seja acionada por engano
+      final query = _searchController.text.trim().toLowerCase();
+      if (_searchQuery != query) {
+        setState(() {
+          _searchQuery = query;
+        });
+      }
     });
   }
 
@@ -32,6 +36,7 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
     super.dispose();
   }
 
+  // Função original: busca agendamentos para um dia específico
   Stream<QuerySnapshot> _getAppointmentsForDay(DateTime day) {
     final startOfDay = DateTime(day.year, day.month, day.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
@@ -41,6 +46,14 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
             isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
         .where('appointmentDate', isLessThan: Timestamp.fromDate(endOfDay))
         .orderBy('appointmentDate')
+        .snapshots();
+  }
+
+  // Nova função: busca TODOS os agendamentos para a pesquisa global
+  Stream<QuerySnapshot> _getAllAppointments() {
+    return FirebaseFirestore.instance
+        .collection('appointments')
+        .orderBy('appointmentDate') // É bom manter uma ordenação
         .snapshots();
   }
 
@@ -55,7 +68,8 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
               title: const Text('Reagendar'),
               onTap: () {
                 Navigator.pop(context);
-                _rescheduleAppointment(context, doc.id);
+                _rescheduleAppointment(
+                    context, doc.id, doc.data() as Map<String, dynamic>);
               },
             ),
             ListTile(
@@ -103,35 +117,22 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
   }
 
   Future<void> _rescheduleAppointment(
-      BuildContext context, String docId) async {
-    final bool? confirm = await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Reagendar Consulta'),
-        content: const Text(
-            'O agendamento atual será cancelado para que possa criar um novo. Deseja continuar?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Não')),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Sim')),
-        ],
-      ),
-    );
-
-    if (confirm == true && mounted) {
-      await FirebaseFirestore.instance
-          .collection('appointments')
-          .doc(docId)
-          .delete();
-      Navigator.pushNamed(context, '/appointments');
-    }
+      BuildContext context, String docId, Map<String, dynamic> data) async {
+    // Lógica de reagendamento aprimorada (opcional, mas recomendado)
+    // Aqui você pode navegar para a tela de agendamento passando os dados do paciente
+    Navigator.pushNamed(context, '/appointments', arguments: {
+      'patientId': data['patientId'],
+      'patientName': data['patientName'],
+      'patientCpf': data['patientCpf'],
+      'appointmentIdToCancel':
+          docId, // Passa o ID do agendamento a ser cancelado
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool isSearching = _searchQuery.isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Consultas Agendadas'),
@@ -148,37 +149,51 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
+                // Adiciona um botão para limpar a busca
+                suffixIcon: isSearching
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      )
+                    : null,
               ),
             ),
           ),
-          TableCalendar(
-            locale: 'pt_BR',
-            headerStyle: const HeaderStyle(
-                formatButtonVisible: false, titleCentered: true),
-            focusedDay: _focusedDay,
-            firstDay: DateTime.utc(2020),
-            lastDay: DateTime.utc(2030),
-            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            onDaySelected: (selectedDay, focusedDay) {
-              setState(() {
-                _selectedDay = selectedDay;
-                _focusedDay = focusedDay;
-              });
-            },
-            calendarStyle: CalendarStyle(
-              selectedDecoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
-                shape: BoxShape.circle,
-              ),
-              todayDecoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
-                shape: BoxShape.circle,
+          // Esconde o calendário quando uma busca está ativa
+          if (!isSearching)
+            TableCalendar(
+              locale: 'pt_BR',
+              headerStyle: const HeaderStyle(
+                  formatButtonVisible: false, titleCentered: true),
+              focusedDay: _focusedDay,
+              firstDay: DateTime.utc(2020),
+              lastDay: DateTime.utc(2030),
+              selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+              onDaySelected: (selectedDay, focusedDay) {
+                setState(() {
+                  _selectedDay = selectedDay;
+                  _focusedDay = focusedDay;
+                });
+              },
+              calendarStyle: CalendarStyle(
+                selectedDecoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
+                todayDecoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
-          ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: _getAppointmentsForDay(_selectedDay),
+              // Lógica condicional: se está buscando, usa a nova função. Senão, usa a antiga.
+              stream: isSearching
+                  ? _getAllAppointments()
+                  : _getAppointmentsForDay(_selectedDay),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -188,27 +203,41 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
                       child: Text('Erro ao carregar os dados.'));
                 }
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(
-                    child: Text('Nenhum agendamento para esta data.',
-                        style: TextStyle(fontSize: 16)),
+                  // Mensagem personalizada se não houver agendamentos na data ou na busca
+                  return Center(
+                    child: Text(
+                        isSearching
+                            ? 'Nenhum agendamento encontrado.'
+                            : 'Nenhum agendamento para esta data.',
+                        style: const TextStyle(fontSize: 16)),
                   );
                 }
 
+                // A lógica de filtro do lado do cliente é aplicada em ambos os casos
                 final appointments = snapshot.data!.docs.where((doc) {
+                  if (!isSearching)
+                    return true; // Se não está buscando, mostra todos do dia
+
                   final data = doc.data() as Map<String, dynamic>;
                   final patientName =
                       (data['patientName'] as String? ?? '').toLowerCase();
-                  final patientCpf =
-                      (data['patientCpf'] as String? ?? '').toLowerCase();
-                  return patientName.contains(_searchQuery) ||
-                      patientCpf.contains(_searchQuery);
+                  final patientCpf = (data['patientCpf'] as String? ?? '')
+                      .replaceAll(RegExp(r'[\.\-]'), ''); // Remove . e - do CPF
+
+                  final searchQuery =
+                      _searchQuery.replaceAll(RegExp(r'[\.\-]'), '');
+
+                  return patientName.contains(searchQuery) ||
+                      patientCpf.contains(searchQuery);
                 }).toList();
 
                 if (appointments.isEmpty) {
-                  return const Center(
+                  return Center(
                     child: Text(
-                        'Nenhum resultado para a sua pesquisa nesta data.',
-                        style: TextStyle(fontSize: 16)),
+                        isSearching
+                            ? 'Nenhum resultado para a sua pesquisa.'
+                            : 'Nenhum agendamento para esta data.',
+                        style: const TextStyle(fontSize: 16)),
                   );
                 }
 
@@ -230,6 +259,13 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
 
   Widget _buildAppointmentTile(BuildContext context, DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    final timestamp = data['appointmentDate'] as Timestamp?;
+    String formattedDate = 'Data não disponível';
+    if (timestamp != null) {
+      final date = timestamp.toDate();
+      formattedDate = "${date.day}/${date.month}/${date.year}";
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       elevation: 2,
@@ -251,7 +287,10 @@ class _GeneralAppointmentsScreenState extends State<GeneralAppointmentsScreen> {
         ),
         title: Text(data['patientName'] ?? 'N/A',
             style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('CPF: ${data['patientCpf'] ?? 'N/A'}'),
+        // Exibe a data do agendamento, útil na busca global
+        subtitle:
+            Text('Data: $formattedDate\nCPF: ${data['patientCpf'] ?? 'N/A'}'),
+        isThreeLine: true,
         onTap: () => _showAppointmentOptions(context, doc),
       ),
     );

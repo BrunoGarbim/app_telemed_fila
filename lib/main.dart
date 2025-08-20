@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:flutter/foundation.dart';
 
 import 'firebase_options.dart';
 import 'screens/intro_screen.dart';
@@ -14,12 +17,25 @@ import 'screens/appointments_screen.dart';
 import 'screens/queue_management_screen.dart';
 import 'screens/general_appointments_screen.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('pt_BR', null);
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // 2. ATIVE O APP CHECK AQUI
+  // Lógica para ativar o provedor correto
+  AndroidProvider androidProvider = AndroidProvider.playIntegrity;
+  if (kDebugMode) {
+    // Se estiver em modo de debug, use o provedor de depuração
+    androidProvider = AndroidProvider.debug;
+  }
+
+  await FirebaseAppCheck.instance.activate(
+    androidProvider: androidProvider, // Use a variável aqui
+    appleProvider: AppleProvider.appAttest,
+  );
+  await initializeDateFormatting('pt_BR', null);
   runApp(const FilaVirtualApp());
 }
 
