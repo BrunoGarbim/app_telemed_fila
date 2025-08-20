@@ -1,4 +1,4 @@
-const functions = require("firebase-functions/v1"); // ALTERADO para v1
+const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 
 if (!admin.apps.length) {
@@ -14,14 +14,11 @@ const isValidTimestamp = (value) => {
   return value && value instanceof admin.firestore.Timestamp;
 };
 
-// APLICADA A CONFIGURAÇÃO DO APP CHECK AQUI
 exports.getWaitingTime = functions
   .runWith({
       enforceAppCheck: true, // Rejeita requisições com tokens do App Check ausentes ou inválidos.
   })
   .https.onCall(async (data, context) => {
-    // O restante da sua lógica permanece inalterado.
-    // context.app conterá os dados do App Check, se necessário.
     try {
       if (!context.auth) {
         throw new functions.https.HttpsError(
@@ -78,16 +75,12 @@ exports.getWaitingTime = functions
         endConsultationTime: isValidTimestamp(appointmentData.endConsultationTime) ? appointmentData.endConsultationTime.toDate().toISOString() : null,
       };
 
-      const userStatus = (() => {
-        if (appointmentData.startConsultationTime) return 'in_progress';
-        if (appointmentData.checkInTime) return 'checked_in';
-        return 'scheduled';
-      })();
-
-      if (userStatus === 'in_progress') {
+      // Se a consulta já começou, o tempo de espera é 0.
+      if (appointmentData.startConsultationTime) {
         return { userName, appointment: appointmentResult, queuePosition: 0, estimatedTime: 0, debugInfo: "Consulta em andamento." };
       }
 
+      // Calcula o tempo médio de atendimento com base no histórico
       let dynamicAverageServiceTime = DEFAULT_CONSULTATION_TIME_MINUTES;
       const historySnapshot = await db
         .collection("appointments")
@@ -115,38 +108,19 @@ exports.getWaitingTime = functions
         }
       }
 
-      let userQueuePosition = 0;
-      let queueName = "";
-      let searchedQueueCpfs = []; // DEBUG
-
-      if (userStatus === 'scheduled') {
-        queueName = "Agenda do Dia";
-        const scheduledQueueSnapshot = await db.collection("appointments")
-          .where("appointmentDate", ">=", startOfDay)
-          .where("appointmentDate", "<", endOfDay)
-          .where("startConsultationTime", "==", null)
-          .orderBy("appointmentDate")
-          .orderBy("timeSlot")
-          .get();
-        const scheduledPatients = scheduledQueueSnapshot.docs.map(doc => doc.data());
-        searchedQueueCpfs = scheduledPatients.map(p => p.patientCpf); // DEBUG
-        const index = scheduledPatients.findIndex(p => p.patientCpf === userCpf);
-        if (index !== -1) userQueuePosition = index + 1;
-
-      } else if (userStatus === 'checked_in') {
-        queueName = "Fila de Espera (Check-in)";
-        const waitingQueueSnapshot = await db.collection("appointments")
-          .where("appointmentDate", ">=", startOfDay)
-          .where("appointmentDate", "<", endOfDay)
-          .where("checkInTime", ">", admin.firestore.Timestamp.fromMillis(0))
-          .where("startConsultationTime", "==", null)
-          .orderBy("checkInTime")
-          .get();
-        const waitingPatients = waitingQueueSnapshot.docs.map(doc => doc.data());
-        searchedQueueCpfs = waitingPatients.map(p => p.patientCpf); // DEBUG
-        const index = waitingPatients.findIndex(p => p.patientCpf === userCpf);
-        if (index !== -1) userQueuePosition = index + 1;
-      }
+      // =================== LÓGICA DE FILA SIMPLIFICADA ===================
+      // Cria uma fila única com todos os pacientes do dia que ainda não foram atendidos,
+      // ordenada pelo horário agendado.
+      const queueSnapshot = await db.collection("appointments")
+        .where("appointmentDate", ">=", startOfDay)
+        .where("appointmentDate", "<", endOfDay)
+        .where("startConsultationTime", "==", null) // Apenas quem não foi atendido
+        .orderBy("appointmentDate")
+        .orderBy("timeSlot")
+        .get();
+      
+      const queuePatients = queueSnapshot.docs.map(doc => doc.data());
+      const userQueuePosition = queuePatients.findIndex(p => p.patientCpf === userCpf) + 1;
 
       if (userQueuePosition <= 0) {
         return { 
@@ -155,15 +129,13 @@ exports.getWaitingTime = functions
           queuePosition: null, 
           estimatedTime: null, 
           debugInfo: { 
-            message: "Usuário não foi encontrado na fila de espera.", 
-            statusDoUsuario: userStatus, 
-            filaPesquisada: queueName,
-            cpfDoUsuarioProcurado: `>${userCpf}<`,
-            cpfsEncontradosNaFila: searchedQueueCpfs 
+            message: "Usuário não encontrado na fila de agendamentos.", 
+            cpfDoUsuarioProcurado: userCpf,
           } 
         };
       }
       
+      // Calcula o tempo restante do paciente em atendimento (se houver)
       let currentConsultationRemainingTime = 0;
       const inProgressSnapshot = await db
         .collection("appointments")
@@ -182,19 +154,9 @@ exports.getWaitingTime = functions
           currentConsultationRemainingTime = Math.max(0, remainingTime);
         }
       }
-
-      let priorityQueueSize = 0;
-      if (userStatus === 'scheduled') {
-          const checkedInQueueSnapshot = await db.collection("appointments")
-              .where("appointmentDate", ">=", startOfDay)
-              .where("appointmentDate", "<", endOfDay)
-              .where("checkInTime", ">", admin.firestore.Timestamp.fromMillis(0))
-              .where("startConsultationTime", "==", null)
-              .get();
-          priorityQueueSize = checkedInQueueSnapshot.size;
-      }
       
-      const waitingQueueTime = (userQueuePosition - 1 + priorityQueueSize) * dynamicAverageServiceTime;
+      // Calcula o tempo de espera com base na posição na fila única
+      const waitingQueueTime = (userQueuePosition - 1) * dynamicAverageServiceTime;
       const totalEstimatedTime = Math.ceil(
         currentConsultationRemainingTime + waitingQueueTime + SAFETY_MARGIN_MINUTES
       );
@@ -205,12 +167,10 @@ exports.getWaitingTime = functions
         queuePosition: userQueuePosition,
         estimatedTime: totalEstimatedTime,
         debugInfo: {
-          userStatus,
-          queueName,
+          queueName: "Fila por Horário Agendado",
           avgServiceTime: dynamicAverageServiceTime,
           currentConsultationRemainingTime,
           waitingQueueTime,
-          priorityQueueSize,
           safetyMargin: SAFETY_MARGIN_MINUTES,
         }
       };
